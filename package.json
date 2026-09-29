@@ -1,0 +1,41 @@
+{
+  "name": "hello-world-compact",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "compile": "node scripts/compile.mjs contracts/hello-world.compact contracts/managed/hello-world",
+    "compile:no-keys": "node scripts/compile.mjs --skip-zk contracts/hello-world.compact contracts/managed/hello-world",
+    "build": "tsc --noEmit",
+    "deploy": "tsx src/deploy.ts",
+    "cli": "tsx src/cli.ts",
+    "proof-server:start": "docker compose up -d",
+    "proof-server:stop": "docker compose down"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.1",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@midnight-ntwrk/midnight-js-contracts": "4.1.1",
+    "@midnight-ntwrk/midnight-js-http-client-proof-provider": "4.1.1",
+    "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "4.1.1",
+    "@midnight-ntwrk/midnight-js-level-private-state-provider": "4.1.1",
+    "@midnight-ntwrk/midnight-js-network-id": "4.1.1",
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "4.1.1",
+    "@midnight-ntwrk/midnight-js-protocol": "4.1.1",
+    "@midnight-ntwrk/midnight-js-types": "4.1.1",
+    "@midnight-ntwrk/midnight-js-utils": "4.1.1",
+    "@midnight-ntwrk/wallet-sdk": "1.2.0",
+    "rxjs": "^7.8.2",
+    "ws": "^8.21.1"
+  },
+  "overrides": {
+    "@midnight-ntwrk/wallet-sdk": "1.2.0"
+  }
+}

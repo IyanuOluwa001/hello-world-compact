@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+contracts/managed/
+
+# Secret / local-only files
+deployment.json
+.env
+.env.*
+
+# Private state database (level / private state provider)
+*.level/
+private-state/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
