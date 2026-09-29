@@ -1,0 +1,137 @@
+name: Deploy Hello World to Preprod
+
+# Runs `npm run deploy` on a GitHub runner.
+#
+# Why this exists: a fresh Preprod wallet must replay the whole chain before it is
+# "synced". On a slow CPU (and without ADX) that takes hours; on a runner it is
+# minutes. This also sidesteps local toolchain limits — the contract is compiled
+# here with keys, then deployed in the same job.
+#
+# Prerequisite: a funded wallet seed, supplied either
+#   * as the `PREPROD_SEED` repository secret (Settings -> Secrets and variables -> Actions), or
+#   * as the `seed` input when manually dispatching this workflow.
+# The seed is never printed and never uploaded — only the resulting contract
+# address is published as the `deployment` artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: 'Wallet seed (optional; falls back to the PREPROD_SEED secret)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # toolchain 0.31.1 == Compact language 0.23.0 / runtime 0.16.0 (matches midnight-js 4.1.1)
+  COMPACTC_VERSION: '0.31.1'
+  COMPACT_OUT: contracts/managed/hello-world
+  PROOF_SERVER_IMAGE: midnightntwrk/proof-server:8.1.0
+
+jobs:
+  deploy:
+    name: Compile + deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      DEPLOY_SEED: ${{ inputs.seed || secrets.PREPROD_SEED }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require a wallet seed
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_SEED:-}" ]; then
+            echo "::error::No seed provided. Add the PREPROD_SEED secret or pass the 'seed' input."
+            exit 1
+          fi
+          echo "Seed provided (length ${#DEPLOY_SEED})."
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Compact toolchain
+        id: cache-compact
+        uses: actions/cache@v4
+        with:
+          path: .compact-toolchain
+          key: compactc-${{ env.COMPACTC_VERSION }}-x86_64-unknown-linux-musl
+
+      - name: Download Compact toolchain
+        if: steps.cache-compact.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p .compact-toolchain
+          curl -sSL -o compactc.zip \
+            "https://github.com/midnightntwrk/compact/releases/download/compactc-v${COMPACTC_VERSION}/compactc_v${COMPACTC_VERSION}_x86_64-unknown-linux-musl.zip"
+          unzip -o compactc.zip -d .compact-toolchain
+          rm -f compactc.zip
+
+      - name: Ensure toolchain is executable
+        run: |
+          set -euo pipefail
+          chmod +x .compact-toolchain/compactc .compact-toolchain/compactc.bin \
+                   .compact-toolchain/zkir .compact-toolchain/zkir-v3
+
+      - name: Compile contract (generates ZK proving/verifying keys)
+        env:
+          COMPACT_HOME: ${{ github.workspace }}/.compact-toolchain
+        run: npm run compile
+
+      - name: Start local proof server
+        run: |
+          set -euo pipefail
+          docker run -d --name proof-server -p 6300:6300 "$PROOF_SERVER_IMAGE"
+          for i in $(seq 1 60); do
+            # any HTTP response (even 404) means the API is listening; connection refused means not yet
+            if curl -s -o /dev/null --max-time 5 http://127.0.0.1:6300/; then
+              echo "proof server is up"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::proof server did not become ready"
+          docker logs proof-server || true
+          exit 1
+
+      - name: Deploy to Preprod
+        run: npm run deploy
+
+      - name: Publish contract address (seed stripped)
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f deployment.json ]; then
+            echo "::warning::deployment.json was not produced"
+            exit 0
+          fi
+          node -e "
+            const d = require('./deployment.json');
+            const pub = { contractAddress: d.contractAddress, network: d.network, deployedAt: d.deployedAt };
+            require('fs').writeFileSync('deployment.public.json', JSON.stringify(pub, null, 2));
+            console.log('Contract Address:', d.contractAddress);
+            console.log('Network:', d.network);
+            console.log('Deployed At:', d.deployedAt);
+          "
+
+      - name: Upload deployment result (no seed)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment
+          path: deployment.public.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Proof server logs (on failure)
+        if: failure()
+        run: docker logs proof-server || true

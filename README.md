@@ -17,6 +17,8 @@ lets anyone read it back. The point is not complexity — it is proving that the
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
 - [Compiling (cross-platform notes)](#compiling-cross-platform-notes)
+- [Compiling with GitHub Actions](#compiling-with-github-actions-recommended-if-your-cpu-lacks-adx)
+- [Deploying from GitHub Actions](#deploying-from-github-actions)
 - [Deploying to Preprod](#deploying-to-preprod)
 - [Using the CLI](#using-the-cli)
 - [Security](#security)
@@ -37,7 +39,7 @@ lets anyone read it back. The point is not complexity — it is proving that the
 | 5 | Contract → JS + ZKIR (`npm run compile:no-keys`) | ✅ Passing |
 | 6 | Proving/verifying key generation (`npm run compile`) | ✅ **In CI** ([run #1](https://github.com/IyanuOluwa001/hello-world-compact/actions/runs/36521810056)) — local CPU lacks ADX |
 | 7 | Proof server running | ✅ Healthy on `127.0.0.1:6300` |
-| 8 | Deploy to Midnight Preprod | 🔄 In progress — keys fetched from CI, wallet funded, deploy running |
+| 8 | Deploy to Midnight Preprod | 🔄 In progress — keys fetched from CI, wallet funded; local sync is slow (hours), so a [CI deploy](#deploying-from-github-actions) is provided |
 | 9 | Store/read message via CLI | ⏳ Pending deploy |
 
 > **Why is step 6 blocked?** The Compact compiler ships a `zkir` binary that generates the Groth16
@@ -146,10 +148,12 @@ hello-world-compact/
 │   ├── deploy.ts                    # deploy contract, fund wallet, register DUST
 │   └── cli.ts                       # interactive store/read menu
 ├── scripts/
-│   └── compile.mjs                  # cross-platform `compact compile` wrapper
+│   ├── compile.mjs                  # cross-platform `compact compile` wrapper
+│   └── sync-debug.mjs               # diagnostic: print wallet sync progress
 ├── .github/
 │   └── workflows/
-│       └── compile.yml              # CI: compile with keys on ADX-capable runners
+│       ├── compile.yml              # CI: compile with keys on ADX-capable runners
+│       └── deploy.yml               # CI: compile + deploy to Preprod (workflow_dispatch)
 ├── docs/
 │   └── linkedin-post.md
 ├── docker-compose.yml               # local proof server
@@ -280,6 +284,41 @@ The zip contains a `hello-world/` folder, so extract it into `contracts/managed/
 
 ---
 
+## Deploying from GitHub Actions
+
+`npm run deploy` is also available as a workflow: `.github/workflows/deploy.yml` (manual,
+*Actions → Deploy Hello World to Preprod → Run workflow*). It exists because **a fresh Preprod wallet
+must replay the entire chain before it reports as synced**, and that replay is CPU-bound: the shielded
+(zswap) wallet catches up in minutes, but the DUST wallet replays on the order of 100–150 events/second.
+On a slow, non-ADX CPU that is hours; on a GitHub runner it is minutes. Running the deploy in CI turns a
+multi-hour local wait into a few minutes, and it lays the foundation for re-deploying in the future.
+
+**One prerequisite — give it a funded seed**, in either of two ways:
+
+1. **Repository secret (recommended).** *Settings → Secrets and variables → Actions → New repository
+   secret* named **`PREPROD_SEED`**, value = the 64-character hex wallet seed (the same one printed by
+   `npm run deploy`). Secrets are not visible in logs.
+2. **Manual input.** When you click *Run workflow*, paste the seed into the optional **`seed`** field.
+
+> Only users with write access can trigger `workflow_dispatch`, and the seed is never printed or
+> uploaded — the workflow publishes **only** the contract address (the `deployment.json` file, which
+> contains the seed, stays on the runner and is deliberately not uploaded).
+
+**What the workflow does:**
+
+1. Checks that a seed was supplied and fails fast if not.
+2. Installs Node 22 + `npm ci`.
+3. Downloads and caches `compactc` 0.31.1.
+4. Runs `npm run compile` — full compile **with** proving/verifying keys (the runners have ADX).
+5. Starts the proof server in Docker (`midnightntwrk/proof-server:8.1.0`) on `127.0.0.1:6300`.
+6. Runs `npm run deploy` (with `DEPLOY_SEED`); the then-synced wallet registers DUST and deploys.
+7. Writes a seed-free `deployment.public.json` and uploads it as the **`deployment`** artifact, printing
+   the contract address in the job summary.
+
+The job has a 150-minute timeout so a stuck network cannot hang a runner forever.
+
+---
+
 ## Deploying to Preprod
 
 Network configuration lives in `src/deploy.ts`:
@@ -377,6 +416,19 @@ kills the sync. `src/deploy.ts` now retries the sync automatically; if it still 
 indexer (`https://indexer.preprod.midnight.network/api/v4/graphql`) and node
 (`https://rpc.preprod.midnight.network`) reachability and re-run.
 
+**Sync is not failing, but it takes hours.**
+That is the DUST wallet replaying the chain, not a hang. The shielded wallet finishes quickly; dust is
+the long pole (order of 100–150 events/second, and there is no persisted sync state, so every run
+starts from genesis). Watch it with the diagnostic:
+
+```bash
+DEPLOY_SEED=<seed> node node_modules/tsx/dist/cli.mjs scripts/sync-debug.mjs
+```
+
+It prints `appliedIndex` vs. the chain tip for shielded/unshielded/dust every 5s and exits once synced.
+If `appliedIndex` is climbing, it is healthy — just slow. The fast fix is to deploy from
+[GitHub Actions](#deploying-from-github-actions) instead.
+
 ---
 
 ## Verification log
@@ -392,6 +444,7 @@ Performed on this machine:
 - ✅ `npm run compile` — **succeeds in GitHub Actions** (ubuntu-latest has ADX); run #1 generated proving/verifying keys and uploaded the `managed-hello-world` artifact
 - ✅ Compiled keys fetched locally from the rolling `compiled-latest` release (`storeMessage.prover` 22 KB, `storeMessage.verifier` 1.3 KB)
 - 🔄 `npm run deploy` — wallet funded from the Preprod faucet; syncing then deploying
+- 🔄 `npm run deploy` alternative — `.github/workflows/deploy.yml` runs the same deploy on a fast runner (needs a `PREPROD_SEED` secret)
 - ⏳ `npm run cli` — pending a successful deployment
 
 ---
