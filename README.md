@@ -53,8 +53,10 @@ lets anyone read it back. The point is not complexity — it is proving that the
 > self-check (`from_uncompressed_unchecked should return a point`), so emulation is not a safe workaround.
 > Everything up to and including ZKIR generation works; only key generation is affected.
 >
-> **To finish steps 6–9 you need one of:** a CPU with ADX (Broadwell+ Intel / Zen+ AMD), a cloud VM/CI runner,
-> or a Midnight-supplied non-ADX build of `zkir`.
+> **To finish steps 6–9 you need one of:** a CPU with ADX (Broadwell+ Intel / Zen+ AMD), a cloud VM, or the
+> included **GitHub Actions workflow** (`.github/workflows/compile.yml`), which compiles with keys on GitHub's
+> ADX-capable runners and publishes them as the `managed-hello-world` artifact — see
+> [Compiling with GitHub Actions](#compiling-with-github-actions-recommended-if-your-cpu-lacks-adx).
 
 ---
 
@@ -145,6 +147,11 @@ hello-world-compact/
 │   └── cli.ts                       # interactive store/read menu
 ├── scripts/
 │   └── compile.mjs                  # cross-platform `compact compile` wrapper
+├── .github/
+│   └── workflows/
+│       └── compile.yml              # CI: compile with keys on ADX-capable runners
+├── docs/
+│   └── linkedin-post.md
 ├── docker-compose.yml               # local proof server
 ├── package.json
 ├── tsconfig.json
@@ -224,6 +231,42 @@ contracts/managed/hello-world/
 ├── keys/       # ZK proving + verifying keys
 └── zkir/       # zero-knowledge intermediate representation
 ```
+
+---
+
+## Compiling with GitHub Actions (recommended if your CPU lacks ADX)
+
+Proving-key generation needs Intel **ADX**. GitHub's `ubuntu-latest` runners have it, so
+`.github/workflows/compile.yml` compiles the contract **with keys** in the cloud and publishes the result as
+a downloadable artifact. Use this whenever your local CPU can't run `zkir`.
+
+**When it runs:** on every push to `main`, on pull requests, and on demand via
+*Actions → Compile Compact contract → Run workflow*.
+
+**What it does:**
+
+1. Checks out the repo and installs Node 22 + `npm ci`.
+2. Downloads `compactc` 0.31.1 from the public GitHub release and caches it between runs.
+3. Runs `npm run compile` (full compile, including `keys/`).
+4. Runs `npm run build` (`tsc --noEmit`).
+5. Verifies `contract/index.js`, `compiler/contract-info.json`, `zkir/storeMessage.zkir`, and `keys/` exist.
+6. Uploads `contracts/managed/hello-world` as the **`managed-hello-world`** artifact (kept 30 days).
+
+**How to use the artifact locally:**
+
+1. Open the workflow run → scroll to **Artifacts** → download **`managed-hello-world`**.
+2. Unzip it so the files land at `contracts/managed/hello-world/` (it should contain `contract/`, `compiler/`,
+   `keys/`, and `zkir/`).
+3. Then deploy from your machine:
+   ```bash
+   npm run proof-server:start
+   npm run deploy
+   ```
+   The deploy script only needs `contracts/managed/hello-world/` plus the proof server — the keys travel in the
+   artifact, so the deploy machine does not need ADX.
+
+> The toolchain version is pinned in one place: the `COMPACTC_VERSION` env var at the top of the workflow.
+> Bump it (and the matching `midnight-js` versions) together when upgrading.
 
 ---
 
@@ -323,7 +366,8 @@ Performed on this machine:
 
 ## Roadmap
 
-1. Run the full compile + deploy on an ADX-capable machine or CI runner.
+1. Run `.github/workflows/compile.yml` to generate the keys in CI, download the `managed-hello-world` artifact,
+   and place it at `contracts/managed/hello-world/`.
 2. Fund the Preprod wallet from the faucet and register for DUST.
 3. Deploy, then store and read back `"Hello from Midnight!"`.
 4. Optionally scaffold with `npx create-mn-app my-app` to compare with the manual flow.

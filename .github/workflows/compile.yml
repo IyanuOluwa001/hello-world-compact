@@ -1,0 +1,96 @@
+name: Compile Compact contract
+
+# Compiles the Hello World contract to ZK circuits WITH proving/verifying keys.
+#
+# Why this exists: generating keys runs the `zkir` binary, which requires the
+# Intel ADX instruction set. GitHub's ubuntu-latest runners support ADX, so this
+# workflow is the reliable place to produce `contracts/managed/hello-world/keys`.
+# Download the "managed-hello-world" artifact and drop it into your local
+# contracts/managed/hello-world/ to deploy from any machine.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # toolchain 0.31.1 == Compact language 0.23.0 / runtime 0.16.0 (matches midnight-js 4.1.1)
+  COMPACTC_VERSION: '0.31.1'
+  COMPACT_OUT: contracts/managed/hello-world
+
+jobs:
+  compile:
+    name: Compile + type-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Compact toolchain
+        id: cache-compact
+        uses: actions/cache@v4
+        with:
+          path: .compact-toolchain
+          key: compactc-${{ env.COMPACTC_VERSION }}-x86_64-unknown-linux-musl
+
+      - name: Download Compact toolchain
+        if: steps.cache-compact.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p .compact-toolchain
+          curl -sSL -o compactc.zip \
+            "https://github.com/midnightntwrk/compact/releases/download/compactc-v${COMPACTC_VERSION}/compactc_v${COMPACTC_VERSION}_x86_64-unknown-linux-musl.zip"
+          unzip -o compactc.zip -d .compact-toolchain
+          rm -f compactc.zip
+
+      - name: Ensure toolchain is executable
+        run: |
+          set -euo pipefail
+          chmod +x .compact-toolchain/compactc .compact-toolchain/compactc.bin \
+                   .compact-toolchain/zkir .compact-toolchain/zkir-v3
+
+      - name: Show toolchain versions
+        env:
+          COMPACT_HOME: ${{ github.workspace }}/.compact-toolchain
+        run: |
+          set -euo pipefail
+          .compact-toolchain/compactc --version
+          .compact-toolchain/compactc --language-version
+          .compact-toolchain/compactc --runtime-version
+
+      - name: Compile contract (generates ZK proving/verifying keys)
+        env:
+          COMPACT_HOME: ${{ github.workspace }}/.compact-toolchain
+        run: npm run compile
+
+      - name: Type-check TypeScript
+        run: npm run build
+
+      - name: Verify artifacts
+        run: |
+          set -euo pipefail
+          test -f "$COMPACT_OUT/contract/index.js"
+          test -f "$COMPACT_OUT/compiler/contract-info.json"
+          test -f "$COMPACT_OUT/zkir/storeMessage.zkir"
+          test -d "$COMPACT_OUT/keys"
+          echo "--- compiled tree ---"
+          find "$COMPACT_OUT" -type f | sort
+
+      - name: Upload compiled contract + keys
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-hello-world
+          path: contracts/managed/hello-world
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6

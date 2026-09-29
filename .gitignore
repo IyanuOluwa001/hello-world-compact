@@ -5,6 +5,9 @@ node_modules/
 dist/
 contracts/managed/
 
+# Local Compact toolchain (downloaded by scripts/compile.mjs / CI)
+.compact-toolchain/
+
 # Secret / local-only files
 deployment.json
 .env
