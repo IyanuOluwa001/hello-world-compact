@@ -10,6 +10,8 @@ contracts/managed/
 
 # Secret / local-only files
 deployment.json
+deploy.log
+seed.txt
 .env
 .env.*
 

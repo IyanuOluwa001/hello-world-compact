@@ -37,8 +37,8 @@ lets anyone read it back. The point is not complexity — it is proving that the
 | 5 | Contract → JS + ZKIR (`npm run compile:no-keys`) | ✅ Passing |
 | 6 | Proving/verifying key generation (`npm run compile`) | ✅ **In CI** ([run #1](https://github.com/IyanuOluwa001/hello-world-compact/actions/runs/36521810056)) — local CPU lacks ADX |
 | 7 | Proof server running | ✅ Healthy on `127.0.0.1:6300` |
-| 8 | Deploy to Midnight Preprod | ⛔ Blocked (needs keys + funded wallet) |
-| 9 | Store/read message via CLI | ⛔ Blocked (needs a deployment) |
+| 8 | Deploy to Midnight Preprod | 🔄 In progress — keys fetched from CI, wallet funded, deploy running |
+| 9 | Store/read message via CLI | ⏳ Pending deploy |
 
 > **Why is step 6 blocked?** The Compact compiler ships a `zkir` binary that generates the Groth16
 > proving/verifying keys. That binary uses Intel **ADX** (`ADCX`/`ADOX`) instructions. The machine used for
@@ -309,6 +309,19 @@ The deploy script will:
 
 > `deployment.json` contains your **wallet seed** and is gitignored. Never commit it.
 
+**Non-interactive deploy / automation.** Set `DEPLOY_SEED` to skip both prompts and restore a known
+wallet — handy for scripts and CI:
+
+```bash
+DEPLOY_SEED=<64-char-hex-seed> npm run deploy
+```
+
+**Resilient sync.** The wallet SDK creates its indexer WebSocket client with
+`shouldRetry: () => false`, so a single transient socket drop aborts an otherwise-healthy (and long)
+sync — a fresh Preprod wallet must replay history from the start. `src/deploy.ts` therefore wraps
+`waitForSyncedState()` in a retry loop that restarts the wallet (resuming from its in-memory applied
+index) up to 10 times instead of crashing.
+
 ---
 
 ## Using the CLI
@@ -358,6 +371,12 @@ Start Docker Desktop and wait for the daemon, then re-run `npm run proof-server:
 **Proof server unhealthy / port 6300 busy.**
 `npm run proof-server:stop` then `npm run proof-server:start`; check `docker compose ps`.
 
+**`Wallet.Sync: [object Object]` / sync aborts after a long wait.**
+The SDK's indexer WebSocket client disables retries (`shouldRetry: () => false`), so a transient drop
+kills the sync. `src/deploy.ts` now retries the sync automatically; if it still fails, check the
+indexer (`https://indexer.preprod.midnight.network/api/v4/graphql`) and node
+(`https://rpc.preprod.midnight.network`) reachability and re-run.
+
 ---
 
 ## Verification log
@@ -371,15 +390,16 @@ Performed on this machine:
 - ✅ Compiler identity verified: `compactc 0.31.1` → language `0.23.0`, runtime `0.16.0`, ledger `8.0.2`
 - ⛔ `npm run compile` — blocked **locally** at `zkir` (missing ADX)
 - ✅ `npm run compile` — **succeeds in GitHub Actions** (ubuntu-latest has ADX); run #1 generated proving/verifying keys and uploaded the `managed-hello-world` artifact
-- ⛔ `npm run deploy` / `npm run cli` — pending (needs the artifact in place + a funded Preprod wallet)
+- ✅ Compiled keys fetched locally from the rolling `compiled-latest` release (`storeMessage.prover` 22 KB, `storeMessage.verifier` 1.3 KB)
+- 🔄 `npm run deploy` — wallet funded from the Preprod faucet; syncing then deploying
+- ⏳ `npm run cli` — pending a successful deployment
 
 ---
 
 ## Roadmap
 
-1. Run `.github/workflows/compile.yml` to generate the keys in CI, download the `managed-hello-world` artifact,
-   and place it at `contracts/managed/hello-world/`.
-2. Fund the Preprod wallet from the faucet and register for DUST.
+1. ~~Generate the keys in CI and place them at `contracts/managed/hello-world/`~~ ✅ done (rolling release `compiled-latest`).
+2. ~~Fund the Preprod wallet from the faucet~~ ✅ funded — DUST registration happens inside `npm run deploy`.
 3. Deploy, then store and read back `"Hello from Midnight!"`.
 4. Optionally scaffold with `npx create-mn-app my-app` to compare with the manual flow.
 5. Extend the contract (e.g. access control, multiple messages) once the pipeline is proven.

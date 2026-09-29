@@ -6,6 +6,7 @@ import { stdin, stdout } from 'node:process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import * as util from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import * as Rx from 'rxjs';
@@ -158,14 +159,23 @@ async function main() {
   try {
     // 1. Wallet setup
     console.log('─── Step 1: Wallet Setup ───────────────────────────────────────\n');
-    const choice = await rl.question('  [1] Create new wallet\n  [2] Restore from seed\n  > ');
 
-    const seed = choice.trim() === '2'
-      ? await rl.question('\n  Enter your 64-character seed: ')
-      : crypto.randomBytes(32).toString('hex');
+    // Non-interactive path: set DEPLOY_SEED to skip both prompts. Useful for
+    // automation / restoring the same funded wallet without an interactive TTY.
+    const envSeed = process.env.DEPLOY_SEED?.trim();
+    let seed: string;
+    if (envSeed) {
+      seed = envSeed;
+      console.log('  Using seed from DEPLOY_SEED.\n');
+    } else {
+      const choice = await rl.question('  [1] Create new wallet\n  [2] Restore from seed\n  > ');
+      seed = choice.trim() === '2'
+        ? await rl.question('\n  Enter your 64-character seed: ')
+        : crypto.randomBytes(32).toString('hex');
 
-    if (choice.trim() !== '2') {
-      console.log(`\n  ⚠️  SAVE THIS SEED (you'll need it later):\n  ${seed}\n`);
+      if (choice.trim() !== '2') {
+        console.log(`\n  ⚠️  SAVE THIS SEED (you'll need it later):\n  ${seed}\n`);
+      }
     }
 
     console.log('  Creating wallet...');
@@ -173,11 +183,42 @@ async function main() {
 
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let frame = 0;
-    const syncSpinner = setInterval(() => {
-      process.stdout.write(`\r  ${frames[frame++ % frames.length]} Syncing with network (this may take a few minutes)...`);
-    }, 80);
-    const state = await walletCtx.wallet.waitForSyncedState();
-    clearInterval(syncSpinner);
+    let syncSpinner: NodeJS.Timeout | undefined;
+    const startSpinner = () => {
+      frame = 0;
+      syncSpinner = setInterval(() => {
+        process.stdout.write(`\r  ${frames[frame++ % frames.length]} Syncing with network (this may take a few minutes)...`);
+      }, 80);
+    };
+    const stopSpinner = () => {
+      if (syncSpinner) clearInterval(syncSpinner);
+      syncSpinner = undefined;
+    };
+
+    // The wallet SDK's indexer WebSocket client is created with `shouldRetry: () => false`,
+    // so a single transient socket drop aborts an otherwise-healthy sync. Restart the wallet
+    // (which resumes from its in-memory applied index) and retry rather than losing the sync.
+    startSpinner();
+    let state: Awaited<ReturnType<typeof walletCtx.wallet.waitForSyncedState>>;
+    const MAX_SYNC_ATTEMPTS = 10;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        state = await walletCtx.wallet.waitForSyncedState();
+        break;
+      } catch (err) {
+        if (attempt >= MAX_SYNC_ATTEMPTS) {
+          stopSpinner();
+          throw err;
+        }
+        stopSpinner();
+        console.log(`\r  ! Sync interrupted (attempt ${attempt}/${MAX_SYNC_ATTEMPTS}); reconnecting...        `);
+        await walletCtx.wallet.stop().catch(() => undefined);
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        await walletCtx.wallet.start(walletCtx.shieldedSecretKeys, walletCtx.dustSecretKey);
+        startSpinner();
+      }
+    }
+    stopSpinner();
     process.stdout.write('\r  ✓ Synced with network.                                      \n');
 
     const address = walletCtx.unshieldedKeystore.getBech32Address();
@@ -279,4 +320,9 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  // The SDK throws Effect tagged errors whose useful context lives on `cause`; a plain
+  // console.error prints "[object Object]", so inspect deeply instead.
+  console.error(util.inspect(err, { depth: 10, colors: false }));
+  process.exit(1);
+});
