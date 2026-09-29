@@ -10,6 +10,7 @@ contracts/managed/
 
 # Secret / local-only files
 deployment.json
+store-result.json
 deploy.log
 seed.txt
 .env
@@ -18,6 +19,7 @@ seed.txt
 # Private state database (level / private state provider)
 *.level/
 private-state/
+hello-world-state/
 
 # Logs
 *.log

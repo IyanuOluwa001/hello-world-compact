@@ -150,8 +150,12 @@ async function main() {
   const rl = createInterface({ input: stdin, output: stdout });
 
   try {
-    // Get wallet seed
-    const seed = await rl.question('  Enter your wallet seed: ');
+    // Get wallet seed: prefer env (so CI can run unattended), otherwise prompt.
+    const seed = (
+      process.env.WALLET_SEED?.trim() ||
+      process.env.DEPLOY_SEED?.trim() ||
+      (await rl.question('  Enter your wallet seed: '))
+    ).trim();
 
     console.log('\n  Connecting to Midnight Preprod...');
     const walletCtx = await createWallet(seed.trim());
@@ -177,6 +181,51 @@ async function main() {
     });
 
     console.log('  Connected!\n');
+
+    // ── Non-interactive mode (used by CI) ────────────────────────────────────
+    // Set STORE_MESSAGE to store that text, read it back, verify, and exit.
+    const scriptedMessage = process.env.STORE_MESSAGE?.trim();
+    if (scriptedMessage) {
+      console.log(`  Storing message: "${scriptedMessage}"`);
+      const tx = await (contract as any).callTx.storeMessage(scriptedMessage);
+      console.log(`  ✅ Message stored! tx=${tx.public.txHash} block=${tx.public.blockHeight}`);
+
+      let readBack = '';
+      for (let attempt = 1; attempt <= 12; attempt++) {
+        const state = await providers.publicDataProvider.queryContractState(deployment.contractAddress);
+        if (state) {
+          const ledgerState = HelloWorld.ledger(state.data);
+          readBack = ledgerState.message ? String(ledgerState.message) : '';
+          if (readBack) break;
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+
+      console.log(`  Read back from chain: "${readBack || '(not indexed yet)'}"`);
+      fs.writeFileSync(
+        'store-result.json',
+        JSON.stringify(
+          {
+            storedMessage: scriptedMessage,
+            readBack,
+            txHash: tx.public.txHash,
+            blockHeight: tx.public.blockHeight,
+            verified: readBack === scriptedMessage,
+          },
+          null,
+          2,
+        ),
+      );
+
+      await walletCtx.wallet.stop();
+      if (readBack !== scriptedMessage) {
+        console.error('  ❌ Stored and read-back messages differ.');
+        process.exit(1);
+      }
+      console.log('  ✅ Store + read verified.\n');
+      rl.close();
+      return;
+    }
 
     // Main menu loop
     let running = true;

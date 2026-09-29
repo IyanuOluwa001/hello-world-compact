@@ -11,7 +11,10 @@ name: Deploy Hello World to Preprod
 #   * as the `PREPROD_SEED` repository secret (Settings -> Secrets and variables -> Actions), or
 #   * as the `seed` input when manually dispatching this workflow.
 # The seed is never printed and never uploaded — only the resulting contract
-# address is published as the `deployment` artifact.
+# address, the stored message, and the transaction hash are published as the
+# `deployment` artifact.
+#
+# The job deploys, then stores a message and reads it back (one sync, reused).
 
 on:
   workflow_dispatch:
@@ -19,6 +22,11 @@ on:
       seed:
         description: 'Wallet seed (optional; falls back to the PREPROD_SEED secret)'
         required: false
+        type: string
+      message:
+        description: 'Message to store on-chain and read back'
+        required: false
+        default: 'Hello from Midnight!'
         type: string
 
 permissions:
@@ -106,6 +114,11 @@ jobs:
       - name: Deploy to Preprod
         run: npm run deploy
 
+      - name: Store a message and read it back
+        env:
+          STORE_MESSAGE: ${{ inputs.message || 'Hello from Midnight!' }}
+        run: npm run cli
+
       - name: Publish contract address (seed stripped)
         if: always()
         run: |
@@ -118,13 +131,20 @@ jobs:
           echo "Contract Address: $(jq -r '.contractAddress' deployment.json)"
           echo "Network: $(jq -r '.network' deployment.json)"
           echo "Deployed At: $(jq -r '.deployedAt' deployment.json)"
+          if [ -f store-result.json ]; then
+            echo "Stored message: $(jq -r '.storedMessage' store-result.json)"
+            echo "Read back:      $(jq -r '.readBack' store-result.json)"
+            echo "Tx hash:        $(jq -r '.txHash' store-result.json)"
+          fi
 
       - name: Upload deployment result (no seed)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: deployment
-          path: deployment.public.json
+          path: |
+            deployment.public.json
+            store-result.json
           if-no-files-found: warn
           retention-days: 30
 

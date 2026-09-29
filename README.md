@@ -312,8 +312,12 @@ multi-hour local wait into a few minutes, and it lays the foundation for re-depl
 4. Runs `npm run compile` — full compile **with** proving/verifying keys (the runners have ADX).
 5. Starts the proof server in Docker (`midnightntwrk/proof-server:8.1.0`) on `127.0.0.1:6300`.
 6. Runs `npm run deploy` (with `DEPLOY_SEED`); the then-synced wallet registers DUST and deploys.
-7. Writes a seed-free `deployment.public.json` and uploads it as the **`deployment`** artifact, printing
-   the contract address in the job summary.
+7. Runs `npm run cli` with `STORE_MESSAGE` set to store a message on-chain, read it back from the
+   indexer, and verify the two match (default `Hello from Midnight!`; change it with the `message` input).
+8. Writes a seed-free `deployment.public.json` and `store-result.json` and uploads them as the
+   **`deployment`** artifact, printing the contract address, the stored message, and the transaction hash.
+
+Everything happens in one job so the wallet is synced once for the deploy and reused for the store.
 
 The job has a 150-minute timeout so a stuck network cannot hang a runner forever.
 
@@ -378,6 +382,15 @@ Enter the same wallet seed from deployment (also stored in `deployment.json`). T
 | `3` | Exit | — |
 
 The current DUST balance is shown in the menu.
+
+**Non-interactive mode.** Handy for scripts and CI — set `STORE_MESSAGE` to skip the menu entirely. The
+wallet syncs, joins the contract, stores the message, waits for the indexer to catch up, reads the value
+back, and exits `0` only if the read-back matches. It writes `store-result.json` with the transaction hash
+and block height. The seed comes from `WALLET_SEED` (or `DEPLOY_SEED`) when set, so it needs no TTY:
+
+```bash
+WALLET_SEED=<seed> STORE_MESSAGE="Hello from Midnight!" npm run cli
+```
 
 ---
 
