@@ -35,7 +35,7 @@ lets anyone read it back. The point is not complexity — it is proving that the
 | 3 | Config + dependencies (`docker-compose.yml`, `npm install`) | ✅ Done |
 | 4 | TypeScript type-check (`npm run build`) | ✅ Passing |
 | 5 | Contract → JS + ZKIR (`npm run compile:no-keys`) | ✅ Passing |
-| 6 | Proving/verifying key generation (`npm run compile`) | ⛔ **Blocked — CPU lacks ADX** (see below) |
+| 6 | Proving/verifying key generation (`npm run compile`) | ✅ **In CI** ([run #1](https://github.com/IyanuOluwa001/hello-world-compact/actions/runs/36521810056)) — local CPU lacks ADX |
 | 7 | Proof server running | ✅ Healthy on `127.0.0.1:6300` |
 | 8 | Deploy to Midnight Preprod | ⛔ Blocked (needs keys + funded wallet) |
 | 9 | Store/read message via CLI | ⛔ Blocked (needs a deployment) |
@@ -265,6 +265,16 @@ a downloadable artifact. Use this whenever your local CPU can't run `zkir`.
    The deploy script only needs `contracts/managed/hello-world/` plus the proof server — the keys travel in the
    artifact, so the deploy machine does not need ADX.
 
+**Faster, no-auth download.** On every push to `main`, the workflow also attaches the same output to a rolling
+release (`compiled-latest`), so you can fetch it with a single command — no GitHub login needed:
+
+```bash
+curl -L -o managed.zip \
+  https://github.com/IyanuOluwa001/hello-world-compact/releases/download/compiled-latest/managed-hello-world.zip
+```
+
+The zip contains a `hello-world/` folder, so extract it into `contracts/managed/`:
+
 > The toolchain version is pinned in one place: the `COMPACTC_VERSION` env var at the top of the workflow.
 > Bump it (and the matching `midnight-js` versions) together when upgrading.
 
@@ -359,8 +369,9 @@ Performed on this machine:
 - ✅ `npm run compile:no-keys` — produced `contract/index.js`, `compiler/contract-info.json`, `zkir/storeMessage.zkir`
 - ✅ `npm run proof-server:start` — container `hello-world-compact-proof-server-1` **Up (healthy)** on `127.0.0.1:6300`
 - ✅ Compiler identity verified: `compactc 0.31.1` → language `0.23.0`, runtime `0.16.0`, ledger `8.0.2`
-- ⛔ `npm run compile` — blocked at `zkir` (missing ADX)
-- ⛔ `npm run deploy` / `npm run cli` — blocked (needs keys + a funded Preprod wallet)
+- ⛔ `npm run compile` — blocked **locally** at `zkir` (missing ADX)
+- ✅ `npm run compile` — **succeeds in GitHub Actions** (ubuntu-latest has ADX); run #1 generated proving/verifying keys and uploaded the `managed-hello-world` artifact
+- ⛔ `npm run deploy` / `npm run cli` — pending (needs the artifact in place + a funded Preprod wallet)
 
 ---
 

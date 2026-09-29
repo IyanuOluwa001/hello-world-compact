@@ -14,6 +14,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   # toolchain 0.31.1 == Compact language 0.23.0 / runtime 0.16.0 (matches midnight-js 4.1.1)
   COMPACTC_VERSION: '0.31.1'
@@ -94,3 +97,21 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 6
+
+      # Also publish a stable, no-auth-downloadable copy on a rolling release.
+      # Fetch it with:
+      #   curl -L -o managed.zip https://github.com/<owner>/<repo>/releases/download/compiled-latest/managed-hello-world.zip
+      - name: Publish keys to rolling release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="compiled-latest"
+          gh release create "$TAG" \
+            --title "Compiled contract (latest)" \
+            --notes "Auto-generated proving/verifying keys for toolchain ${COMPACTC_VERSION}, built from ${GITHUB_SHA} by run ${GITHUB_RUN_ID}." \
+            2>/dev/null || true
+          (cd contracts/managed && zip -r "$RUNNER_TEMP/managed-hello-world.zip" hello-world)
+          gh release upload "$TAG" "$RUNNER_TEMP/managed-hello-world.zip" --clobber
+          echo "Release asset: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/managed-hello-world.zip"
